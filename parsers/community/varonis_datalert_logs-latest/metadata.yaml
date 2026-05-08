@@ -1,0 +1,20 @@
+metadata_details:
+  purpose: "OCSF-compliant parser for Varonis DatAlert events delivered as LEEF over syslog. Captures the syslog wrapper and 5-field LEEF header, walks the 4-space-delimited key=value extension, and normalises Varonis vendor fields onto OCSF Security Finding (class 2001). DatAlert is the alerting engine that correlates DatAdvantage audit telemetry against threat models — the events emitted are by definition vendor alerts."
+  datasource_vendor: "Varonis"
+  dataSource: "Varonis DatAlert"
+  format: "LEEF"
+  ocsf_version: "1.1.0"
+  ingestion_method: "Syslog via Agent or Collector"
+  dependency_summary: "Requires syslog ingestion of Varonis DatAlert events in LEEF:1.0 format with the Varonis-specific 4-space delimiter between extension key=value pairs. Pair parser: varonis_datadvantage_logs-latest (same wire shape, different identity tags — apply each based on the originating collector / log source label)."
+  performance_impact: "Minimal — single frame format plus one repeating key/value catch-all; v1 mappings rename vendor-native fields onto OCSF dotted paths."
+  ocsf_mapping:
+    class_uid: 2001
+    class_name: "Security Finding"
+    category_uid: 2
+    category_name: "Findings"
+    activity_id: 1
+    activity_name: "Create"
+    type_uid: 200101
+  tags: "varonis, datalert, datadvantage, leef, syslog, threat_model, alert, security_finding, ocsf, parser"
+  version: "1.0.4"
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
