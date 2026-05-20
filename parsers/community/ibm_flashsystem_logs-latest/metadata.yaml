@@ -1,0 +1,37 @@
+name: ibm_flashsystem_logs
+display_name: IBM FlashSystem
+description: >
+  Parses syslog events from IBM FlashSystem storage appliances (tested on FS9500).
+  Covers two log sources emitted over syslog:
+    - sshd: SSH authentication and session events → OCSF Authentication (3002)
+    - IBM4983: FlashSystem audit trail (svctask commands) → OCSF API Activity (6003)
+  IBM4983 auth-echo lines (duplicates of sshd failures) are discarded.
+version: "1.0.0"
+author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+vendor: IBM
+product: FlashSystem
+ocsf_classes:
+  - class_uid: 3002
+    class_name: Authentication
+    note: sshd password/publickey logon success/failure, session open/close
+  - class_uid: 6003
+    class_name: API Activity
+    note: IBM4983 svctask audit trail (mkvdiskhostmap, addsnapshot, rmvolume, etc.)
+log_format: BSD syslog (RFC 3164), no year in timestamp
+design_decisions:
+  - |
+    IBM4983 echoes every sshd authentication failure as:
+    "IBM4983[pid]: Failed password for <user> from <ip> service sshd"
+    These are discarded (parser format 2) because sshd emits the same event
+    with richer data (includes src_endpoint.port). Keeping both would
+    double-count failures in dashboards and alerts.
+    If sshd log forwarding is ever disabled, replace the IBM4983 discard
+    format with a structured Authentication 3002 format using:
+    "IBM4983\[pid\]: Failed password for $user.name$ from $src_endpoint.ip$ service sshd"
+tested_on:
+  - IBM FlashSystem 9500
+tags:
+  - storage
+  - ssh
+  - authentication
+  - audit
