@@ -1,0 +1,78 @@
+name: delinea_secret_server_logs
+display_name: Delinea (Thycotic) Secret Server
+description: >
+  Parses Delinea/Thycotic Secret Server audit events delivered as CEF over
+  classic syslog (CEF:0|Thycotic Software|Secret Server|...). A single parser
+  routes per CEF signature id into three OCSF classes:
+    - USER LOGIN / LOGINFAILURE (16, 18)            -> OCSF Authentication (3002)
+    - USER ENABLE / DISABLE / EDIT (3, 2, 10100)    -> OCSF Account Change (3001)
+    - SECRET VIEW / LAUNCH / PASSWORDCHANGE /
+      PASSWORDCHANGEFAILURE / HEARTBEATSUCCESS
+      (10004, 10006, 10055, 10155, 10032)           -> OCSF API Activity (6003)
+  SECRET (PAM credential-access) events are modelled as an operation on a
+  resources[] entry (the secret): api.operation = the vendor action verb,
+  resources[0] = { name, uid, type:"Secret" }.
+version: "1.0.0"
+author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+vendor: Delinea
+product: Secret Server
+format: OCSF
+ingestion_method: >
+  Secret Server "Advanced Audit & Reporting" / SIEM Integration configured to
+  emit CEF over syslog (UDP/TCP/TLS) to the SDL collector. One event per
+  audited action. Tested against product version 11.10.x.
+ocsf_classes:
+  - class_uid: 3002
+    class_name: Authentication
+    note: USER LOGIN (activity Logon/Success) and LOGINFAILURE (Logon/Failure)
+  - class_uid: 3001
+    class_name: Account Change
+    note: USER ENABLE (Enable), DISABLE (Disable), EDIT (Other) — actor.user is the operator, user is the changed account
+  - class_uid: 6003
+    class_name: API Activity
+    note: SECRET VIEW/LAUNCH (Read), PASSWORDCHANGE (Update), PASSWORDCHANGEFAILURE (Update/Failure), HEARTBEATSUCCESS (Other)
+log_format: CEF over BSD syslog (RFC 3164); optional <PRI>; no year in the syslog timestamp
+design_decisions:
+  - |
+    The CEF extension is sliced with a rewrites-on-`extension` array rather
+    than a whitespace-delimited key=value catch-all. Required because the
+    free-text msg= field and several CEF extension values (cs4, cs4Label, rt)
+    contain internal spaces, and the trailing-key ORDER varies per event type.
+    Each rewrite is an independent Java regex that degrades to a no-op on
+    non-matching events.
+  - |
+    SECRET-only fields (resources[0].name/uid and api.operation) are gated by
+    baking the "Event: [Secret]" context into the rewrite regex, so USER /
+    Authentication events never emit a resources[] entry or api.operation.
+  - |
+    OCSF SECRET mapping: PAM credential-access has no native OCSF class, so it
+    is modelled as API Activity (6003) per the parser owner's decision —
+    api.operation + a single resources[] entry for the secret. VIEW/LAUNCH map
+    to Read (2), PASSWORDCHANGE to Update (3), HEARTBEATSUCCESS to Other (99).
+  - |
+    Reserved-field safety: device receipt-time (CEF rt) goes to the String
+    field metadata.original_time, never the reserved time/timestamp; the syslog
+    host goes to device.hostname (not host); severity is emitted as
+    severity_id + severity_name (never the reserved `severity`).
+  - |
+    Domain\\user principals are split: the AD/local domain is copied to
+    actor.user.domain / user.domain while the full principal stays in
+    actor.user.name / user.name. Principals without a domain (e.g.
+    ThycoticSystem) leave the domain unset.
+enum_sources:
+  - OCSF 1.5.0 activity_id / status_id enums verified against schema.ocsf.io
+    (account_change, authentication, api_activity).
+tested_on:
+  - Delinea/Thycotic Secret Server 11.10.000000
+tags:
+  - delinea
+  - thycotic
+  - secret_server
+  - pam
+  - privileged_access
+  - cef
+  - syslog
+  - authentication
+  - account_change
+  - api_activity
+  - ocsf
