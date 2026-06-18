@@ -1,0 +1,108 @@
+name: pfsense_logs
+title: pfSense (Netgate) Firewall, IPsec & OpenVPN
+author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+version: 1.0.0
+metadata_details:
+  purpose: >
+    Parses a single pfSense syslog feed carrying three security sub-sources and
+    maps them to OCSF: filterlog (firewall packet filter) and charon (strongSwan
+    IPsec/IKE) to Network Activity (4001), and openvpn (remote-access VPN) to
+    Authentication (3002). Co-mingled non-security daemons in the same feed are
+    discarded.
+  datasource_vendor: Netgate
+  datasource_name: pfSense
+  format: syslog (RFC 5424 and RFC 3164); filterlog body is positional CSV
+  ingestion_method: streaming syslog
+  ocsf:
+    - class_uid: 4001
+      class_name: Network Activity
+      sources: [filterlog, charon]
+    - class_uid: 3002
+      class_name: Authentication
+      sources: [openvpn]
+  programs_handled:
+    - filterlog   # IPv4/IPv6 firewall block & pass; icmp/tcp/udp/pfsync/carp/igmp/gre + ICMPv6/UDP/Options
+    - charon      # IKE_SA established, CHILD_SA close (+bytes), PSK auth ok/fail, state changes
+    - openvpn     # Peer Connection Initiated, pool assignment, SIGTERM teardown
+  programs_discarded:        # present in source data but not security-relevant; dropped
+    - avahi-daemon
+    - vnstatd
+    - /usr/sbin/cron
+    - filterdns
+  # ---------------------------------------------------------------------------
+  # Deliberate design choices (decisions made jointly with the author)
+  # ---------------------------------------------------------------------------
+  deliberate_choices:
+    - choice: OCSF class assignment
+      detail: >
+        filterlog -> Network Activity 4001; charon (site-to-site IPsec) ->
+        Network Activity 4001 (no dedicated VPN class, modelled as gateway-to-
+        gateway connection activity); openvpn (remote-access, named user) ->
+        Authentication 3002.
+    - choice: timezone = Europe/Rome (hardcoded)
+      detail: >
+        RFC 5424 lines carry their own +02:00 offset and are timezone-
+        independent. RFC 3164 (BSD) lines - ALL charon plus legacy-framed
+        openvpn/daemon lines - carry no offset/year and inherit this value.
+        Set to Europe/Rome because the source deployment is +02:00. THIS IS THE
+        ONE PER-DEPLOYMENT KNOB; change it if the appliance is in another zone.
+    - choice: discard co-mingled non-security daemons
+      detail: >
+        avahi-daemon, vnstatd, /usr/sbin/cron and filterdns share the feed but
+        are not firewall/IPsec/VPN events; they are dropped (discard:true) to
+        keep the security event stream clean. Remove the relevant discard format
+        to retain any of them.
+    - choice: IPv6 firewall events are KEPT
+      detail: >
+        Unlike the community catalog parser (which discards IPv6), IPv6 is
+        captured - L3 src/dst/proto for ICMPv6/Options/etc., plus TCP/UDP ports.
+    - choice: generic catch-all per program
+      detail: >
+        charon/openvpn lines that match no specific subtype still get class
+        metadata with activity_id 99 (Other), so every retained event is
+        classified. (e.g. IKE state changes, policy notices, received DELETE.)
+    - choice: firewall action & direction mapping
+      detail: >
+        action: block -> action_id 2 / "Denied", pass -> action_id 1 /
+        "Allowed". direction: in -> direction_id 1 / "Inbound", out ->
+        direction_id 2 / "Outbound". activity_id is 6 (Traffic) for all
+        filterlog (per-packet filter decisions).
+    - choice: charon IKE_SA established endpoint roles
+      detail: >
+        In "established between A...B", A is the local ("myself") gateway ->
+        src_endpoint.ip, B is the peer -> dst_endpoint.ip. IKE unique id ->
+        connection_info.uid. activity_id 1 (Open), status Success.
+    - choice: charon CHILD_SA close byte counters
+      detail: >
+        strongSwan "<spi>_i (N bytes)" -> traffic.bytes_in, "<spi>_o (N bytes)"
+        -> traffic.bytes_out. activity_id 2 (Close).
+    - choice: charon AUTH_FAILED modelled as failed open
+      detail: >
+        "generating IKE_AUTH response ... N(AUTH_FAILED)" -> activity_id 1
+        (Open) + status_id 2 (Failure) = a tunnel-open attempt that failed.
+        Successful PSK auth -> status_id 1 (Success). The local-side
+        "'<ip>' (myself) with pre-shared key" assertion (no "successful") and
+        "schedule delete ... for peer '<ip>'" lines route to the Other
+        catch-all; their embedded peer IP is intentionally NOT captured.
+    - choice: openvpn event modelling
+      detail: >
+        Peer Connection Initiated -> activity_id 1 (Logon), client public IP:port
+        -> src_endpoint.ip/port, bracketed user -> user.name. MULTI_sva pool
+        assignment -> Logon with the assigned tunnel IPv4 -> device.ip. SIGTERM
+        -> activity_id 2 (Logoff): NOTE this is a process/session teardown signal
+        and does NOT distinguish a graceful client disconnect from a server-side
+        timeout (the source log does not differentiate them). All openvpn events
+        carry session.is_remote = true.
+    - choice: mixed RFC 5424 / RFC 3164 framing
+      detail: >
+        Two universal non-halting timestamp formats (one per framing) run first;
+        openvpn body formats use a precise preamble alternation
+        "(\\[<pid>\\]: | <pid> - - )" rather than a loose ".* openvpn.* " which
+        backtracks inconsistently between the two framings.
+    - choice: raw message discarded
+      detail: >
+        discardAttributes ["message"] drops the raw event text from stored
+        events (the test UI still displays it; live ingest removes it).
+
+  performance_impact: Low - bounded line-fragment formats, single mappings pass.
+  tags: pfsense, netgate, firewall, ipsec, openvpn, vpn, ocsf, network-activity, authentication
