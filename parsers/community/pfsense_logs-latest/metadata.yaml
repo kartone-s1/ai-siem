@@ -1,7 +1,7 @@
 name: pfsense_logs
 title: pfSense (Netgate) Firewall, IPsec & OpenVPN
 author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
-version: 1.0.0
+version: 1.2.0
 metadata_details:
   purpose: >
     Parses a single pfSense syslog feed carrying three security sub-sources and
@@ -23,14 +23,20 @@ metadata_details:
   programs_handled:
     - filterlog   # IPv4/IPv6 firewall block & pass; icmp/tcp/udp/pfsync/carp/igmp/gre + ICMPv6/UDP/Options
     - charon      # IKE_SA established, CHILD_SA close (+bytes), PSK auth ok/fail, state changes
-    - openvpn     # Peer Connection Initiated, pool assignment, SIGTERM teardown
+    - openvpn     # Logon: Peer Connection Initiated, pool assignment, user authenticated,
+                  #   "openvpn server '..' user '..' address '..' - connected"
+                  # Logoff: SIGTERM teardown, "- disconnected"
+                  # Logon Failure: cert expired (VERIFY ERROR), OpenSSL cert verify failed,
+                  #   TLS handshake failed, TLS key negotiation timeout
+                  # Other (activity 99): replay warnings, peer info IV_*, MANAGEMENT chatter,
+                  #   config WARNINGs, LDAP auth-backend bind errors (kept, not discarded)
   programs_discarded:        # present in source data but not security-relevant; dropped
     - avahi-daemon
     - vnstatd
     - /usr/sbin/cron
     - filterdns
   # ---------------------------------------------------------------------------
-  # Deliberate design choices
+  # Deliberate design choices (decisions made jointly with the author)
   # ---------------------------------------------------------------------------
   deliberate_choices:
     - choice: timezone = Europe/Rome (hardcoded)
@@ -40,6 +46,39 @@ metadata_details:
         openvpn/daemon lines - carry no offset/year and inherit this value.
         Set to Europe/Rome because the source deployment is +02:00. THIS IS THE
         ONE PER-DEPLOYMENT KNOB; change it if the appliance is in another zone.
+
+    - choice: high-volume OpenVPN noise mapped to activity_id 99 (Other), not discarded
+      detail: >
+        Replay warnings ("Authenticate/Decrypt packet error: bad packet ID", the single
+        largest event type by volume), client capability negotiation ("peer info: IV_*"),
+        local management-socket chatter ("MANAGEMENT: ..."), config WARNINGs and the LDAP
+        auth-backend bind error all fall through to the generic openvpn fallback as
+        Authentication / Other. Retained (not dropped) at the author's request so the data
+        remains queryable; revisit if replay-warning volume becomes a cost concern.
+    - choice: bare "openvpn:" syslog framing supported
+      detail: >
+        Some OpenVPN lines (e.g. "user '<u>' authenticated", the auth-script LDAP errors)
+        arrive as RFC 3164 with NO PID - "openvpn: <body>" rather than "openvpn[pid]:".
+        The OpenVPN prefix alternation accepts three forms: "[pid]: ", " <pid> - - "
+        (5424) and bare ": ".
+
+  changelog:
+    - version: 1.2.0
+      change: >
+        Mirror the authenticated OpenVPN account onto actor.user.name (in addition to
+        user.name) so Authentication-class detection content that keys on the actor -
+        e.g. "successful logons from multiple countries" - resolves the principal.
+        Copy is a no-op on filterlog/charon events.
+    - version: 1.1.0
+      change: >
+        Added OpenVPN security-event mappings surfaced by a pure-OpenVPN sample feed:
+        credential auth success ("user '..' authenticated"), session connect/disconnect
+        ("openvpn server '..' user '..' address '..' - connected/disconnected") and four
+        auth-failure variants (cert expired, OpenSSL cert verify failed, TLS handshake
+        failed, TLS key negotiation timeout). Added bare "openvpn:" framing support and a
+        `quoted` pattern. High-volume noise left as activity 99 (Other).
+    - version: 1.0.0
+      change: Initial release - filterlog, charon, openvpn -> OCSF 4001/3002.
 
   performance_impact: Low - bounded line-fragment formats, single mappings pass.
   tags: pfsense, netgate, firewall, ipsec, openvpn, vpn, ocsf, network-activity, authentication
