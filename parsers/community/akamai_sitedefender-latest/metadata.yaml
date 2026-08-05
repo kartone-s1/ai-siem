@@ -1,11 +1,28 @@
 metadata_details:
-  purpose: Parser for Akamai SiteDefender WAF logs using the OCSF mapping to normalise events into
-    the AI-SIEM schema.
+  purpose: Parser for Akamai SIEM connector events in CEF format, normalising them
+    into OCSF HTTP Activity (4002). Solves two separate scoping problems in the
+    source data - (a) the pretty-printed JSON array brackets/braces that the Akamai
+    UI export wraps around each record, which are not part of the log format, and
+    (b) the free-text WAF rule fields cs2 (Rule Messages) and cs3 (Rule Data),
+    which contain internal spaces and parentheses that break the normal
+    space-delimited CEF extension parsing.
   datasource_vendor: akamai
-  dataSource: sitedefender
+  datasource_name: Akamai SIEM Connector (CEF)
+  dataSource: ocsf
   format: OCSF
-  ingestion_method: unknown
-  dependency_summary: Requires ingestion of the original Akamai SiteDefender WAF logs.
-  performance_impact: "Minimal – this parser processes JSON-formatted WAF events."
-  tags: akamai, sitedefender, waf, http, security, ocsf, parser
-  version: latest
+  ingestion_method: syslog
+  dependency_summary: >-
+    Requires the Akamai SIEM connector configured for CEF output, delivered as one
+    CEF record per line. The parser is envelope-agnostic - its event format is a
+    fragment anchored on "CEF:", so a syslog header, a JSON wrapper, or no prefix
+    at all all match. Bracket/brace-only lines from the UI export are matched by a
+    separate format and discarded so they cost neither storage nor log volume.
+  performance_impact: >-
+    Minimal - one fragment match plus a fixed set of independent per-field rewrites.
+    No repeating catch-all format and no line groupers. Largest observed record is
+    8.5 KB, well inside the ~50,000 char per-event parse limit.
+  tags: akamai, siem, cef, waf, http, bot-manager, security, ocsf, parser
+  version: 1.0.10
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+  ocsf_classes:
+    - Akamai SIEM CEF -> HTTP Activity (4002)
