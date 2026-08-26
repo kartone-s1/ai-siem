@@ -1,0 +1,134 @@
+metadata_details:
+  purpose: >
+    Parses Delinea/Thycotic Secret Server audit events delivered as CEF over
+    classic syslog (CEF:0|Thycotic Software|Secret Server|...). A single parser
+    routes per CEF signature id into five OCSF classes:
+      - USER LOGIN / LOGINFAILURE / LOGOUT (16, 18, 17) -> Authentication (3002)
+      - USER CREATE / ENABLE / DISABLE / EDIT (1, 3, 2, 10100) -> Account Change (3001)
+      - USER ADDEDTOGROUP / REMOVEDFROMGROUP / GROUP EDIT /
+        ROLE ASSIGNUSERORGROUP (5, 6, 10141, 10) -> Group Management (3006)
+      - SECRET VIEW / LAUNCH / PASSWORDCHANGE / PASSWORDCHANGEFAILURE /
+        HEARTBEATSUCCESS (10004, 10006, 10055, 10155, 10032) -> API Activity (6003)
+      - PLATFORM SYNCHRONIZE / DOMAIN SYNCHRONIZE (10200, 10145) -> API Activity (6003)
+      - System Log internal diagnostics (500) -> API Activity (6003)
+    SECRET (PAM credential-access) events are modelled as an operation on a
+    resources[] entry (the secret): api.operation = the vendor action verb,
+    resources[0] = { name, uid, type:"Secret" }.
+  datasource_vendor: Delinea
+  datasource_name: Secret Server
+  dataSource: Secret Server
+  format: OCSF
+  ingestion_method: syslog
+  dependency_summary: >
+    Requires Secret Server "Advanced Audit & Reporting" / SIEM Integration
+    configured to emit CEF over syslog (UDP/TCP/TLS) to the SDL collector. One
+    event per audited action.
+  performance_impact: >
+    Minimal - one syslog+CEF header frame match plus a set of independent
+    regex rewrites over the CEF extension, each a no-op on non-matching events.
+  tags: delinea, thycotic, secret_server, pam, privileged_access, cef, syslog,
+    authentication, account_change, group_management, api_activity, ocsf, parser
+  version: 1.2.1
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+  log_format: CEF over BSD syslog (RFC 3164); optional <PRI>; no year in the syslog timestamp
+  ocsf_classes:
+    - class_uid: 3002
+      class_name: Authentication
+      note: >
+        USER LOGIN (activity Logon/Success) and LOGINFAILURE (Logon/Failure).
+        Since v1.1.1 also covers LOGOUT (Logoff/Success, signature_id 17) — a
+        raw sample showed it previously matched no ss_kind at all, so it had no
+        class_uid/category_uid, not just missing activity/status.
+    - class_uid: 3001
+      class_name: Account Change
+      note: >
+        USER ENABLE (Enable), DISABLE (Disable), EDIT (Other) — actor.user is
+        the operator, user is the changed account. Since v1.2.0 also covers
+        CREATE (activity_id 1).
+    - class_uid: 3006
+      class_name: Group Management
+      note: >
+        Added in v1.2.0. USER ADDEDTOGROUP -> Add User (3), REMOVEDFROMGROUP ->
+        Remove User (4), GROUP EDIT -> Other (99, no dedicated rename/update
+        value in the enum), ROLE ASSIGNUSERORGROUP -> Assign Privileges (1).
+        activity_id enum verified against schema.ocsf.io/1.6.0, since the
+        bundled skill reference lists field paths for this class but not its
+        enum values.
+    - class_uid: 6003
+      class_name: API Activity
+      note: >
+        SECRET VIEW/LAUNCH (Read), PASSWORDCHANGE (Update), PASSWORDCHANGEFAILURE
+        (Update/Failure), HEARTBEATSUCCESS (Other). Since v1.1.0 also covers
+        PRECHECKIN (10158, Other) and HEARTBEATFAILURE (10007, Other/Failure)
+        by signature_id, plus EXPIRES01DAY/EXPIRES30DAYS/EXPIREDTODAY and
+        WEBPASSWORDFILL (Other) and PASSWORD_DISPLAYED (Read), which carry no
+        distinct signature id and are keyed on metadata.event_code instead
+        (see design_decisions). Since v1.2.0 also covers PLATFORM/DOMAIN
+        SYNCHRONIZE (Other) via a separate ss_kind=='sync' bucket, kept apart
+        from the SECRET-driven ss_kind=='api' bucket so these events don't
+        pick up the SECRET-only resources[0].type constant. Since v1.2.1 also
+        covers System Log (Other, signature_id 500) via its own ss_kind=='system'
+        bucket, for the same reason.
+  design_decisions:
+    - >
+      The CEF extension is sliced with a rewrites-on-`extension` array rather
+      than a whitespace-delimited key=value catch-all. Required because the
+      free-text msg= field and several CEF extension values (cs4, cs4Label, rt)
+      contain internal spaces, and the trailing-key ORDER varies per event type.
+      Each rewrite is an independent Java regex that degrades to a no-op on
+      non-matching events.
+    - >
+      Every rewrite sets outputIfNoMatch: false. The tenant default is true,
+      which writes the INPUT (`extension`) verbatim into the output field when
+      the regex does not match — dumping the whole raw body into fields absent
+      from a given event type (e.g. api.operation on a LOGIN).
+    - >
+      Five event types carry no distinct CEF signature id and are keyed on
+      metadata.event_code instead (SECRET - EXPIRES01DAY, EXPIRES30DAYS,
+      EXPIREDTODAY, WEBPASSWORDFILL, PASSWORD_DISPLAYED). metadata.event_code
+      is the renamed CEF `name` header field.
+    - >
+      SECRET-only fields (resources[0].name/uid and api.operation) are gated by
+      baking the "Event: [Secret]" context into the rewrite regex, so USER /
+      Authentication events never emit a resources[] entry or api.operation.
+      For the same reason sync (10200, 10145) and System Log (500) events get
+      their own ss_kind buckets rather than reusing the SECRET bucket.
+    - >
+      OCSF SECRET mapping: PAM credential-access has no native OCSF class, so it
+      is modelled as API Activity (6003) per the parser owner's decision —
+      api.operation + a single resources[] entry for the secret. VIEW/LAUNCH map
+      to Read (2), PASSWORDCHANGE to Update (3), HEARTBEATSUCCESS to Other (99).
+    - >
+      DETECTION AUTHORS: filter on the scalar fields fname (secret name) and
+      fileId (secret id), NOT on resources[0].name / resources[0].uid.
+      PowerQuery rejects [N] array indexing — HTTP 500 in a columns clause and
+      HTTP 400 as a group key — so the resources[] entry is readable in Event
+      Search and via powerquery_schema_discover but is not usable as a filter or
+      grouping key. Inside a query, array_get(resources, 0) in a let works.
+      The scalars carry the same values: measured over a 10,000-event sample
+      (3,244 SECRET events), fname equalled resources[0].name on 3,244 of 3,244,
+      and fileId equalled resources[0].uid on 3,081 of 3,244 — the other 163
+      being events where resources[0].uid is unset (no "Item Id" in the msg
+      text, e.g. HEARTBEAT) while fileId is still present from the CEF
+      extension. fileId is therefore the more complete of the two.
+      resources[] is retained because it is the OCSF-canonical representation.
+    - >
+      Reserved-field safety: device receipt-time (CEF rt) goes to the String
+      field metadata.original_time, never the reserved time/timestamp; the syslog
+      host goes to device.hostname (not host); severity is emitted as
+      severity_id + severity_name (never the reserved `severity`).
+    - >
+      Domain\user principals are split: the AD/local domain is copied to
+      actor.user.domain / user.domain while the full principal stays in
+      actor.user.name / user.name. Principals without a domain (e.g.
+      ThycoticSystem) leave the domain unset.
+    - >
+      Nothing is discarded (discardAttributes: []). Fields with a clean OCSF
+      home are mapped there; the rest are kept vendor-native and queryable.
+  enum_sources:
+    - >
+      OCSF activity_id / status_id enums verified against schema.ocsf.io —
+      account_change, authentication and api_activity against 1.5.0,
+      group_management against 1.6.0.
+  tested_on:
+    - Delinea/Thycotic Secret Server 11.10.000000
