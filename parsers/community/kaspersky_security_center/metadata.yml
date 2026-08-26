@@ -42,6 +42,23 @@ metadata_details:
         - GNRL_EV_DEVCTRL_DEV_UNPLUGGED
         - GNRL_EV_PASSWD_ARCHIVE_FOUND
         - KLSRV_HOST_STATUS_CRITICAL
+      notes: >
+        Since 1.6.0 the detection verdict name is additionally exposed as
+        malware.name for the GNRL_EV_* file/malware family (PATH I). It is
+        sourced from the first "Name:" line following "Result description:"
+        inside EVC_EV_DESC, which is the invariant across every malware variant
+        observed in a 10,000-event production sample (EVC_EV_DESC can carry two
+        "Name:" lines — the application, then the threat). Verified 73/73 across
+        GNRL_EV_VIRUS_FOUND (38), GNRL_EV_OBJECT_NOTCURED (28) and
+        GNRL_EV_VIRUS_FOUND_BY_KSN (7), with no false positives on the 834
+        non-malware events that also route to PATH I.
+        Deliberately scalar rather than the OCSF-canonical malware[0].name:
+        OCSF models malware as an array on Detection Finding, but an array-index
+        field name cannot be referenced from a PowerQuery columns/filter clause,
+        and this field exists specifically to be queried by detection content.
+        finding_info.title is unchanged and still carries the threat name for
+        this family, but it holds an attack name or result description on other
+        paths, so malware.name is the stable key for malware detections.
     - class_uid: 3004
       class_name: Entity Management
       event_types:
@@ -63,5 +80,5 @@ metadata_details:
     - ocsf
     - detection-finding
     - entity-management
-  version: latest
+  version: 1.6.0
   author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
