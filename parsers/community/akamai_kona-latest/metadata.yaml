@@ -1,0 +1,21 @@
+metadata_details:
+  purpose: Parser for Akamai Kona Site Defender SIEM events. Normalises Akamai WAF
+    JSON events (geo, httpMessage, identity, attackData) into OCSF HTTP Activity
+    (4002) with disposition / severity / finding metadata layered on top.
+  datasource_vendor: akamai
+  dataSource: kona_site_defender
+  format: OCSF
+  ingestion_method: Akamai SIEM REST API (one JSON object per line) or Akamai Data
+    Stream / log forwarder. One event per inspected HTTP request.
+  dependency_summary: Requires the Akamai SIEM connector configured against a
+    Security Configuration with logging enabled. Each policy (policyId) that fires
+    a rule emits one event per request; allowed traffic is not included unless
+    "Log Allowed" is enabled on the policy.
+  performance_impact: Minimal. Single format with a gron capture into unmapped.*,
+    then a v1 mappings block that renames into OCSF. Request and response header
+    blobs are dropped at ingest (drop_tree on unmapped) so per-event size stays
+    well under the 50KB parse limit.
+  tags: akamai, kona, site_defender, waf, app_and_api_protector, http, security, ocsf, parser
+  version: 1.0.2
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+  
