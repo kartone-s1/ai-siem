@@ -1,0 +1,19 @@
+metadata_details:
+  purpose: "Parses Forcepoint NGFW (formerly Stonesoft) events shipped over LEEF 1.0 / syslog. Stamps OCSF Network Activity (class_uid 4001) on firewall connection events (Connection_Allowed / Connection_Closed / Connection_Closed-Abnormally / Connection_Discarded / HTTP_URL-Logged) with per-event-code activity_id / disposition / status, and OCSF Authentication (class_uid 3002) on management-plane and captive-portal login events (System_Engine-LOGIN_Failed / System_Engine-LOGIN_Event / FW_BBA-User-login-failed / 'Management Server: Login failed') with activity_id=1 (Logon) + status_id 1 (Success) or 2 (Failure). Extracts source/destination endpoints, NAT-translated addresses and ports, IANA protocol number → name (TCP/UDP/ICMP/etc.), user, sender (firewall node), severity, and converts vendor devTime into epoch milliseconds for the SDL timestamp / OCSF time fields."
+  datasource_vendor: "Forcepoint"
+  dataSource: "Forcepoint NGFW"
+  format: "leef"
+  ingestion_method: "Syslog via Agent or Collector"
+  performance_impact: "Low – per-event-code frames anchor on the literal LEEF event code so only one of the per-code frames matches each line, plus a fallback frame for unhandled codes, plus a single repeating K/V catch-all and a devTime-anchor for timestamp extraction."
+  tags:
+    - forcepoint
+    - ngfw
+    - stonesoft
+    - firewall
+    - leef
+    - syslog
+    - ocsf
+    - network-activity
+    - authentication
+  version: "v1.3.0"
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
