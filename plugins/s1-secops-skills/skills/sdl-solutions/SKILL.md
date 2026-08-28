@@ -4,6 +4,19 @@ author: Prithvi Moses <prithvi.moses@sentinelone.com>
 description: "Deploy packaged, repeatable SentinelOne Singularity Data Lake (SDL) solutions into a site from one prompt. Use when the user wants to onboard, deploy, or roll out a whole SDL solution. Catalog: (1) data source onboarding (raw to OCSF, enrichment, dashboard, MITRE detections, threat response); (2) asset enrichment from the Asset Inventory; (3) UEBA anomaly detection (ten detections incl. PEER-GROUP, security use-case selector, Robust or Standard method); (4) per-device ingest health; (5) detection exclusions; (6) Risk-Based Alerting; (7) Detection as Code (rules as TOML in Git, synced to the Custom Detection API via CI); (8) alert noise reduction (find noisy sources, recommend an ingestion filter, auto-resolve actioned noise, noise-vs-signal dashboard). Triggers: 'onboard a source', 'deploy UEBA/ingest health', 'add a detection exclusion', 'deploy RBA', 'detection as code', 'reduce alert noise', 'alert optimization'. NOT for one-off queries or standalone parser authoring."
 ---
 
+
+<!-- CONFIG-FILE-ADDRESSING v1 -->
+> **SDL config files: address by `udoId`, and do not trust a REST listing.**
+> REST `listFiles` / `getFile` **cannot see** udoId-addressed `/dashboards/` files, so `getFile`
+> returns `404` on a dashboard the console is displaying and the listing under-reports (measured on
+> one tenant: REST 8, GraphQL 17, console 48 files). **If a listing disagrees with what the UI
+> shows, the listing is wrong until proven otherwise** — change read path before concluding the
+> object is missing or the token lacks scope. Use the GraphQL `configFiles` / `configFile` surface.
+> A name-addressed `addConfigFile` to `/dashboards/` **creates a duplicate** instead of updating;
+> address dashboards by `udoId` with `expectedVersion`. `content` is HJSON, not JSON. `S1-Scope`
+> changes which files exist as far as the caller can tell.
+> Full detail: [`sdl-api/references/config-file-graphql.md`](../sdl-api/references/config-file-graphql.md)
+
 # SentinelOne SDL Solutions
 
 This skill packages repeatable SDL solutions and deploys them into a specific customer

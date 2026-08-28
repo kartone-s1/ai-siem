@@ -4,6 +4,19 @@ author: Prithvi Moses <prithvi.moses@sentinelone.com>
 description: Use whenever the user wants to author, edit, debug, validate, or explain a SentinelOne Singularity Data Lake (SDL) log parser, the augmented-JSON files at /logParsers/ that extract fields from raw log text before ingestion. Trigger on "SDL parser", "Skylight parser", "log parser", "parser editor", "write a parser", "test parser", or any pasted raw log the user wants turned into structured fields. Also trigger on parser-DSL keywords like `formats:`, `patterns:`, `lineGroupers:`, `rewrites:`, `discardAttributes:`, `aliasTo:`, `{parse=...}`, `{regex=...}`. Especially trigger when the user pastes a raw log (CEF, syslog, JSON, key=value, multi-line, CSV) and asks to extract fields, normalize timestamps, or drop noise. If the project is SDL/Singularity/Scalyr and the user says "parse this log", use this skill. Always validates end-to-end via putFile → HEC ingest (parser applied) → query. NOT for PowerQuery (use powerquery), NOT for plain ingest without a parser (use sdl-api).
 ---
 
+
+<!-- CONFIG-FILE-ADDRESSING v1 -->
+> **SDL config files: address by `udoId`, and do not trust a REST listing.**
+> REST `listFiles` / `getFile` **cannot see** udoId-addressed `/dashboards/` files, so `getFile`
+> returns `404` on a dashboard the console is displaying and the listing under-reports (measured on
+> one tenant: REST 8, GraphQL 17, console 48 files). **If a listing disagrees with what the UI
+> shows, the listing is wrong until proven otherwise** — change read path before concluding the
+> object is missing or the token lacks scope. Use the GraphQL `configFiles` / `configFile` surface.
+> A name-addressed `addConfigFile` to `/dashboards/` **creates a duplicate** instead of updating;
+> address dashboards by `udoId` with `expectedVersion`. `content` is HJSON, not JSON. `S1-Scope`
+> changes which files exist as far as the caller can tell.
+> Full detail: [`sdl-api/references/config-file-graphql.md`](../sdl-api/references/config-file-graphql.md)
+
 # SentinelOne SDL Log Parser Authoring
 
 This skill turns raw log samples into deployed, validated SDL parser definitions. A parser is an *augmented-JSON* file at `/logParsers/<name>` on the SDL tenant that extracts fields from each ingested line. The parser editor and the `Test Parser` button in the console run the parser client-side in JavaScript; this skill mirrors that workflow programmatically and finishes by ingesting a sample through the deployed parser to confirm the actual ingest path works.
