@@ -5,11 +5,54 @@ description: >
   Use this skill any time the user wants to create, edit, design, generate, deploy, or debug a SentinelOne Singularity Data Lake (SDL) dashboard. Triggers include: "build me a dashboard", "create a dashboard panel", "write dashboard JSON", "add a panel to my dashboard", "deploy a dashboard to SDL", "I want a dashboard that shows...", "can you make a dashboard for...", "threat dashboard", "SOC dashboard", "network dashboard", "audit dashboard", "O365 dashboard", "hunting dashboard", or any request that involves SDL/Scalyr dashboard JSON. Also triggers when the user pastes dashboard JSON and wants help fixing, improving, or extending it. Use alongside sdl-api to deploy dashboards, and alongside powerquery to validate or compose the queries inside panels. Always use this skill when dashboards, dashboard panels, or SDL visualization is involved, even if the user just says "show me [metric] over time" in a security/SDL context.
 ---
 
+
+<!-- CONFIG-FILE-ADDRESSING v1 -->
+> **SDL config files: address by `udoId`, and do not trust a REST listing.**
+> REST `listFiles` / `getFile` **cannot see** udoId-addressed `/dashboards/` files, so `getFile`
+> returns `404` on a dashboard the console is displaying and the listing under-reports (measured on
+> one tenant: REST 8, GraphQL 17, console 48 files). **If a listing disagrees with what the UI
+> shows, the listing is wrong until proven otherwise** — change read path before concluding the
+> object is missing or the token lacks scope. Use the GraphQL `configFiles` / `configFile` surface.
+> A name-addressed `addConfigFile` to `/dashboards/` **creates a duplicate** instead of updating;
+> address dashboards by `udoId` with `expectedVersion`. `content` is HJSON, not JSON. `S1-Scope`
+> changes which files exist as far as the caller can tell.
+> Full detail: [`sdl-api/references/config-file-graphql.md`](../sdl-api/references/config-file-graphql.md)
+
 # SentinelOne SDL Dashboard Skill
 
 This skill helps you design, author, and deploy Singularity Data Lake (SDL) dashboards, from a single panel to a full multi-tab SOC dashboard. Dashboards live as configuration files in SDL and are authored as JSON (or a relaxed JavaScript-literal superset of it). You deploy them via the `sdl-api` skill's `put_file` method.
 
 > **Sandbox proxy blocked?** If `put_file` or SDL API calls to `*.sentinelone.net` fail with a connection or proxy error inside the Claude sandbox, use the `s1-secops-mcp` server instead. It runs locally via `node` and bypasses the sandbox proxy entirely. Setup: add it to `claude_desktop_config.json` (see `s1-secops-mcp/README.md`). Use the `sdl_put_file` tool to deploy dashboards and `sdl_get_file` / `sdl_list_files` to inspect what's already deployed.
+
+## Before you start: REST cannot SEE most dashboards
+
+`sdl_list_files` / `getFile` omit **every udoId-addressed `/dashboards/` file**. This is a
+visibility gap, not just an addressing one, and it makes a live dashboard look deleted.
+
+Symptoms, all observed together on one tenant:
+
+- `getFile` returns `404` on a dashboard the console is displaying;
+- the REST listing returns **8** dashboards where GraphQL returns **17** and the console's
+  Configuration Files tab shows **48** files.
+
+**If a listing disagrees with what the UI shows, the listing is wrong until proven otherwise.**
+That contradiction is the signal to change read path, not to conclude the object is missing or that
+your token lacks scope. Reach for the GraphQL config-file surface
+(`sdl-api/references/config-file-graphql.md`):
+
+```graphql
+query  { configFiles { udoId name readOnly version } }
+query f($udoId: ID!) { configFile(udoId: $udoId) { udoId name content version } }
+```
+
+Two things that bite immediately after a successful read:
+
+- **`content` is HJSON, not JSON** — unquoted keys and relaxed commas. `json.loads` raises
+  `Expecting property name enclosed in double quotes`. Parse with an HJSON reader; you can write
+  plain JSON back.
+- **`S1-Scope` is honoured** and silently changes what exists as far as the caller can tell. A
+  site-scoped dashboard is invisible to an account-scoped listing, so "not found" is always
+  scope-relative.
 
 ## Workflow
 

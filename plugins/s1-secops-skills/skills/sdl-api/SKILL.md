@@ -5,6 +5,19 @@ description: >-
   Use whenever the user wants to read data and manage configuration through the SentinelOne Singularity Data Lake (SDL) API: run queries or manage configuration files (parsers, dashboards, alerts, lookups, datatables) on a Scalyr/SDL/XDR tenant. Trigger on "SDL", "SDL API", "Singularity Data Lake", "Scalyr", "DataSet", or any "*.sentinelone.net/sdl/api/*" URL, and on the method names "query", "powerQuery", "facetQuery", "timeseriesQuery", "numericQuery", "configFiles", "configFile", "addConfigFile", "deleteConfigFile", "getFile", "putFile", "listFiles". Also trigger on "udoId", "config file", "/sdl/v2/graphql", or a console display string of the form "/dashboards/id/{number}/{name}". Also trigger on tasks like "run a powerQuery", "list configuration files", "edit my parser via API", "deploy a dashboard JSON", "compute the rate of failures over time", or anything involving SDL Bearer-token auth or the S1-Scope header. Wraps every SDL method with a Python client and CLI.
 ---
 
+
+<!-- CONFIG-FILE-ADDRESSING v1 -->
+> **SDL config files: address by `udoId`, and do not trust a REST listing.**
+> REST `listFiles` / `getFile` **cannot see** udoId-addressed `/dashboards/` files, so `getFile`
+> returns `404` on a dashboard the console is displaying and the listing under-reports (measured on
+> one tenant: REST 8, GraphQL 17, console 48 files). **If a listing disagrees with what the UI
+> shows, the listing is wrong until proven otherwise** — change read path before concluding the
+> object is missing or the token lacks scope. Use the GraphQL `configFiles` / `configFile` surface.
+> A name-addressed `addConfigFile` to `/dashboards/` **creates a duplicate** instead of updating;
+> address dashboards by `udoId` with `expectedVersion`. `content` is HJSON, not JSON. `S1-Scope`
+> changes which files exist as far as the caller can tell.
+> Full detail: [`sdl-api/references/config-file-graphql.md`](../sdl-api/references/config-file-graphql.md)
+
 # SentinelOne SDL API
 
 Wraps the Singularity Data Lake API (query and configuration-file methods) with a pre-built Python client, a CLI runner, and a per-method reference.

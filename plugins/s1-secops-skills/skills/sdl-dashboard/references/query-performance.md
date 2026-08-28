@@ -164,3 +164,135 @@ dataSource.name='FortiGate' unmapped.action='close'
 See `powerquery/references/pitfalls.md` for the full discussion of column-type lock and when the `parse "$x{regex=\\d+}$"` extraction is preferable to `number()`.
 
 ---
+
+## Panel cost: pick the right SOURCE before tuning the query
+
+Tips 1-9 above make a given query cheaper. This section is about not running it against the
+expensive thing in the first place, which is worth far more.
+
+Measured on one tenant, same 24-hour window, same day:
+
+| What the panel queries | Rows scanned | Typical wall |
+|---|---:|---:|
+| A datatable, `dataset 'config://datatables/<name>'` | 10^2 | effectively 0 |
+| An entity datasource with `count_by` pushdown | 10^1 pre-aggregated | ~1.3 s |
+| `datasource metering` | 10^2 | ~6 s |
+| Raw event lake, one day | ~9x10^8 | 5-18 s |
+| Raw event lake, 15-30 days | ~10^10 | does not complete |
+
+**Before tuning a lake panel, check whether the answer already exists pre-aggregated.** Worked
+example from a live board: an ingest-health Overview tab was scanning ~9x10^8 events *five times per
+tab load* to compute numbers already sitting in a 13-row and a 182-row datatable written by its own
+nightly job. Retargeting those panels, cold windows, alternating order, median of 3:
+
+| Panel | Lake | Datatable |
+|---|---:|---:|
+| sources ingesting | 10.5 s | 3.5 s |
+| events total | 5.1 s | 3.7 s |
+| top sources | 7.6 s | 3.7 s |
+| **three panels** | **23.2 s** | **10.9 s** |
+
+The datatable numbers sit on a ~3.4 s launch+poll floor, so the true gain is larger than 2.1x.
+
+### Count the scans per TAB, not per panel
+
+A tab fires every panel at once. That Overview had five independent full-lake scans, and **two of
+them were the same query differing only by `limit 15` vs `limit 10`** — one scan was pure waste.
+Before shipping a tab, list its queries and look for duplicates and for anything hitting the lake
+that need not.
+
+### Split the board on "is this a right-now question?"
+
+Anything that is not live can come from the nightly artefact. Anything genuinely live must not.
+On the board above: Overview and Health read the nightly baseline datatables; the four detections
+keep reading the lake, because "has this feed gone dark right now" cannot be answered from a
+baseline built last night.
+
+**Say which is which in the board.** Once the two sources coexist they will disagree by up to a
+day, and a reader cannot tell from a number alone.
+
+### Panel titles and legends are part of the query
+
+Two defects from the same rework, both self-inflicted:
+
+- Retargeting a panel titled "Events (24h)" at a 15-day baseline table without retitling it
+  produces a confidently wrong number.
+- The board's legend asserted *"Overview panels show RAW volume ... BEFORE the exclusion lists are
+  applied"*. That became false the moment the queries moved, and sat there misdescribing the board.
+
+Treat descriptive markdown as code that must change with the queries it describes.
+
+### Show the control surface
+
+Exclusion and allowlist tables applied invisibly cannot be audited from the board. One small table
+listing them (`| dataset 'config://datatables/<exclusions>' | columns value, reason, added`) makes
+the dashboard self-explaining and costs nothing.
+
+### `count_by` pushdown and datasource-line pruning
+
+The stock console dashboards never touch `dataset = events`. They use entity datasources and push
+aggregation into the `datasource` statement, before the first pipe:
+
+```text
+| datasource assets where (surfaces = 'Endpoint') count_by 'category' | group sum(count)
+```
+
+Aggregation happens in the storage layer, so the pipeline receives pre-grouped rows. After a
+pushdown always fold with `sum(count)`, never `count()`. Anti-pattern:
+`| datasource assets | group count() by category` — same answer, no pushdown.
+
+Prune on the datasource line too:
+
+```text
+| datasource assets from 'workstation, server' ...          # subcategory prune
+| datasource assets type 'surface/endpoint' ...             # type prune
+| datasource vulnerabilities timestamp_field lastSeenAt ... # declares the time field
+```
+
+**`timestamp_field` matters more than it looks: without it the panel's `startTime`/`endTime` cannot
+prune and the query degrades to a full-entity scan.** It does not compose with every option, e.g.
+`datasource metering from <x> timestamp_field <y>` returns
+`400 Unsupported params: [ from, timestamp_field ]`.
+
+### Multi-series plus an overall total, in one query
+
+```text
+| union ( <source> | group v=sum(x) by bucket, entity ),
+        ( <source> | group v=sum(x) by bucket | let entity = 'TOTAL' )
+| group v=sum(v) by bucket, entity
+| transpose entity
+```
+
+Gives one series per entity and a TOTAL line from a single scan.
+
+### `datasource metering`: useful, with hard limits
+
+`metering from xdr_ingested_bytes` returns per-source ingest volume in ~6 s where the equivalent
+lake scan takes 5-18 s. Before reaching for it:
+
+- it measures **bytes**, not event counts;
+- granularity is **daily** only;
+- it **lags several days** — measured 5 days behind, and a 24-hour window returns **zero rows**.
+
+Good for long-range trend and cost panels. Useless for "is this feed dark now", and the zero-row
+result for a recent window looks like a broken query rather than a stale datasource.
+
+### Perceived speed is architecture, not raw query speed
+
+Console panel latency is not sub-second: median launch ~1.3 s, p95 ~1.9 s across 111 launches in one
+capture. The boards feel fast because every panel is an independent async job rendering progressively
+from `stepsCompleted`/`totalSteps`, not because any single query is quick. Do not chase a sub-second
+panel query.
+
+One caveat on copying that fan-out: it works because those are ~1-2 s pre-aggregated entity queries.
+Firing many concurrent multi-hundred-million-row *lake* scans measured **slower** than running them
+sequentially — three concurrent 1-day slices took 334 s with two failures, against 213 s for a
+single 3-day query.
+
+### Always tear down abandoned jobs
+
+Killing a client does not stop the query; it keeps consuming backend capacity and starves later
+panels. The console calls `removeQuery` ~0.9 times per launch. Programmatically,
+`DELETE /sdl/v2/api/queries/{id}` on every exit path that is not a completion.
+
+---

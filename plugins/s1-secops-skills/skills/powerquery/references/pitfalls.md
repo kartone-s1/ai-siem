@@ -703,3 +703,51 @@ Common cause: grouping dropped a field you assumed was still present, or duplica
 - A second `group` cannot reference a field renamed in the first group: after `group ... by source = dataSource.name`, key the next group on `by source`, not `by source = dataSource.name` ("undefined field 'dataSource.name'").
 - Do not transpose on `dataSource.name` or a device key (values contain spaces); use honeycomb, single-series time charts, or `grouped_data`.
 - `avg()`, `stddev()`, `pct(N, x)` and `p10/p90/p999` all work in `group` (do not treat them as missing).
+
+### A comma in a CSV datatable breaks every query that joins it
+
+`putFile` / `addConfigFile` do **not** validate CSV shape. A free-text column containing a comma
+turns a 4-column row into 5, the write returns **200**, and reading the content back shows exactly
+what was sent — so neither the write nor a naive verification catches it.
+
+It surfaces later, on unrelated queries:
+
+```
+400 {"code":"invalid_argument",
+     "message":"Line 12 has 5 columns instead of 4 columns as defined in the CSV headers"}
+```
+
+Every query that `lookup`s the table fails, so one bad row in an exclusion list can disable an
+entire detection set at once. The error names the consumer, not the corrupt file, which sends
+first-instinct debugging to the wrong place.
+
+Free-text columns (`reason`, `owner`, `notes`) are the usual culprit. Validate the column count
+before writing, or quote the field. Vigilance is not a fix: this was introduced, caught in a dry
+run, fixed, then reintroduced by hand in the same session.
+
+### `savelookup` has its own timeout budget
+
+A query whose read half completes can still die in the write:
+
+```
+500 {"code":"internal_server_error",
+     "message":"timeout prevented savelookup from completing"}
+```
+
+The query is dead server-side, so **re-polling never recovers it** — a retry has to relaunch. A
+poll loop that retries on 5xx will burn its whole budget achieving nothing.
+
+### Success does not mean correct
+
+Distinct writes seen returning HTTP success while producing something unusable: a malformed CSV
+(200), a duplicate dashboard from a name-addressed write (200), and a workflow that imported
+cleanly then failed activation. **On this platform HTTP success means "accepted", not "correct".**
+Every write needs a semantic read-back: parse the CSV, count the objects, activate the workflow.
+
+### Abandoned queries keep running
+
+Killing a client does not stop an LRQ; it continues consuming backend capacity and starves later
+queries on the same tenant. Always `DELETE /sdl/v2/api/queries/{id}` on any exit path that is not a
+completion. Related: **a poll-count budget is not a time budget** — each poll can block for the
+client timeout, so `max_polls x sleep` badly understates worst-case wall time. Scheduled work needs
+an explicit wall-clock deadline.

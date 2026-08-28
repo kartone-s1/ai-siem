@@ -16,6 +16,19 @@ description: >-
   references/autonomous-soc-template.md). When in doubt, use it.
 ---
 
+
+<!-- CONFIG-FILE-ADDRESSING v1 -->
+> **SDL config files: address by `udoId`, and do not trust a REST listing.**
+> REST `listFiles` / `getFile` **cannot see** udoId-addressed `/dashboards/` files, so `getFile`
+> returns `404` on a dashboard the console is displaying and the listing under-reports (measured on
+> one tenant: REST 8, GraphQL 17, console 48 files). **If a listing disagrees with what the UI
+> shows, the listing is wrong until proven otherwise** — change read path before concluding the
+> object is missing or the token lacks scope. Use the GraphQL `configFiles` / `configFile` surface.
+> A name-addressed `addConfigFile` to `/dashboards/` **creates a duplicate** instead of updating;
+> address dashboards by `udoId` with `expectedVersion`. `content` is HJSON, not JSON. `S1-Scope`
+> changes which files exist as far as the caller can tell.
+> Full detail: [`sdl-api/references/config-file-graphql.md`](../sdl-api/references/config-file-graphql.md)
+
 # SentinelOne Hyperautomation Skill
 
 This skill enables Claude to design and generate valid SentinelOne Hyperautomation workflow
@@ -123,6 +136,8 @@ Read `references/functions-reference.md` for available functions and their synta
 ### Step 4: Validate before outputting
 
 Self-check against `references/validation-rules.md` before presenting the workflow.
+
+If the workflow chains `Function.JQ` steps, builds a time window, or fails a run deliberately, also read `references/expressions-gotchas.md`. It covers the failures that only appear at runtime or activation: `Function.JQ(...,true)` returns a STRING so the next JQ cannot index it; `PARSE_JSON` rejects an already-materialised object; a `local_var` is invisible to the action that defines it; quote-bearing expressions inlined in an http_request payload fail at ACTIVATION with `invalid_references`; absolute calendar-day windows via `FORMATTED_DATE`; using `evaluate-expression` as a pre-deploy test loop; the fake-attribute throw idiom; and why retrying a poll cannot revive a dead LRQ.
 
 ### Step 5: API submission (optional)
 

@@ -5,6 +5,19 @@ description: >-
   Use any time the user wants to author, debug, optimize, explain, or run a SentinelOne PowerQuery (PQ): Deep Visibility / Event Search queries, XDR/EDR threat hunting, investigations, STAR / Custom Detection rule bodies, PowerQuery Alerts, or Singularity Data Lake dashboard panels. Trigger on PowerQuery, PQ, pq, query, Event Search, Deep Visibility, S1QL, SDL, STAR rule, Custom Detection rule, PowerQuery Alert; on queries using fields like `event.type`, `src.process.*`, `tgt.file.*`, `indicator.*`, `agent.uuid`; on pipes like `| group`, `| filter`, `| let`, `| join`, `| parse`, `| columns`, `| compare`, `| top`, `| union`, `| lookup`, `| savelookup`, `| dataset`. Also trigger when asked to hunt a TTP, IOC, behaviour, or alert pattern on a SentinelOne tenant, even casually ("find powershell reaching out to the internet", "write a detection for lsass access"). Explicitly NOT Microsoft Power Query / M / Excel and NOT Splunk SPL; this is SentinelOne's pipeline query language for security telemetry.
 ---
 
+
+<!-- CONFIG-FILE-ADDRESSING v1 -->
+> **SDL config files: address by `udoId`, and do not trust a REST listing.**
+> REST `listFiles` / `getFile` **cannot see** udoId-addressed `/dashboards/` files, so `getFile`
+> returns `404` on a dashboard the console is displaying and the listing under-reports (measured on
+> one tenant: REST 8, GraphQL 17, console 48 files). **If a listing disagrees with what the UI
+> shows, the listing is wrong until proven otherwise** — change read path before concluding the
+> object is missing or the token lacks scope. Use the GraphQL `configFiles` / `configFile` surface.
+> A name-addressed `addConfigFile` to `/dashboards/` **creates a duplicate** instead of updating;
+> address dashboards by `udoId` with `expectedVersion`. `content` is HJSON, not JSON. `S1-Scope`
+> changes which files exist as far as the caller can tell.
+> Full detail: [`sdl-api/references/config-file-graphql.md`](../sdl-api/references/config-file-graphql.md)
+
 # SentinelOne PowerQuery
 
 PowerQuery (PQ) is SentinelOne's pipeline query language for the Singularity Data Lake. It reads like `filter | command | command | …`, events that match the initial filter flow through a sequence of piped transformations (group, let, join, sort, columns, etc.).
@@ -230,6 +243,7 @@ Don't read these upfront. Read the one you need.
 - `references/fields-and-schema.md`: common EDR/XDR field paths (`src.process.*`, `tgt.file.*`, `event.login.*`, `dst.ip.*`, `indicator.*`, etc.) and OCSF conventions. Read when you're not sure what field holds the thing you want.
 - `references/o365-fields.md`: Microsoft 365 / Exchange / Teams / SharePoint audit field shape, covering OCSF vs `unmapped.*` duality, fields that live only inside the JSON `message` blob, the discover-before-you-filter rule, send-style operations, RecordType, service-tier IP filtering, and investigation-noise separator. Read before writing any PQ against an M365 audit source.
 - `references/detection-rules.md`: how to author PowerQuery Alerts / STAR / Custom Detection rule bodies, including the 1,000-row / 1 MB alert constraints and which PQ features are supported in alert context.
+- `references/query-cost.md`: where query time actually goes. The cost hierarchy (datatable vs entity datasource vs event lake), why a `lookup` AFTER `group` can beat one before it (118s -> 40s measured, faster while scanning 4.8x more events), why a rolling window couples scan size to the run hour, slice width and why parallel slices measured SLOWER than sequential, `savelookup`'s separate timeout budget, abandoned-query cleanup, and how to benchmark without fooling yourself (cache-order artifacts, poll-interval floors, tenant variance). Read before optimising anything or quoting a timing.
 - `references/pitfalls.md`: curated list of common failures and their fixes (the `*`-as-filter trap, forgetting `|` before `join`, subquery position errors, memory-limit messages, `message contains` vs `* contains` on JSON-blob sources, and more).
 - `references/automatic-lookups.md`: tenant-wide `/automaticLookups` enrichment that applies to every search and PowerQuery with no `| lookup` typed: config schema, the "output value fields must be unique across all specs" rule, the 100,000-row (unvalidated) / 5 MB / 50-column limits, deploy-via-SDL-API flow, verified `lookup`/`dataset` gotchas, and a full Windows Event Logs SID-to-username worked example. Read when the user wants to add a lookup for SID/username (or any key) that everyone should see automatically, or asks about `/automaticLookups`.
 - `references/datasource-command.md`: the `| datasource <name> [from <dataset>]` command for querying SentinelOne-managed inventory (Asset Inventory, Alerts, Vulnerabilities, Misconfigurations, Metering, SDL retention) that lives outside the event store. Covers datasource names, the `assets`/`metering` datasets, column discovery, time-series via `*_aggregated_snapshots`, and the tenant-validated specifics for asset enrichment: `from 'surface/identity'` vs sparse `from identity`, `from 'surface/endpoint'` vs sparse `from device`, single-quoting slash dataset names, empty-`riskFactors` (`"[]"`) suppression, and the `datasource ... | savelookup` pattern for building enrichment lookup tables. Read whenever the user asks about assets, identities, vulnerabilities, alerts inventory, or building an asset-enrichment lookup.
