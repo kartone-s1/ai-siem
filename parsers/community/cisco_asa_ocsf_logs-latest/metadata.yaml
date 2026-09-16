@@ -1,0 +1,185 @@
+name: cisco_asa_ocsf_logs
+display_name: Cisco ASA (Adaptive Security Appliance) - OCSF
+description: >
+  Parses Cisco ASA firewall syslog. The observed frame carries no syslog
+  timestamp and no hostname — just `<PRI>%ASA-<severity>-<message-id>: <body>` —
+  so a non-halting frame format extracts the syslog priority, the ASA severity
+  digit and the ASA message id, and per-message-id formats (halt: true, ordered
+  most-specific-first) crack the body open. Two extra frame formats cover
+  deployments with `logging timestamp` enabled and relays that add an RFC 3164
+  timestamp plus hostname.
+
+  Message ids modelled, by OCSF class:
+    - 302013 / 302015 Built inbound|outbound TCP|UDP connection  -> Network Activity (4001), Open
+    - 302014 / 302016 Teardown TCP|UDP connection                -> Network Activity (4001), Close
+    - 302020 / 302021 Built / Teardown ICMP connection           -> Network Activity (4001), Open / Close
+    - 725001 / 725002 SSL handshake start / complete             -> Network Activity (4001), Open + tls.version
+    - 725007          SSL session terminated                     -> Network Activity (4001), Close
+    - 725016          Trust-point selected for session           -> Network Activity (4001), Other
+    - 113005          AAA user authentication rejected (server)  -> Authentication (3002), Logon / Failure
+    - 113015          AAA user authentication rejected (local)   -> Authentication (3002), Logon / Failure
+    - 113014          AAA authentication server not accessible   -> Authentication (3002), Logon / Failure
+    - 113022 / 113023 AAA server marked FAILED / ACTIVE          -> Authentication (3002), Other
+    - 716038 / 716039 WebVPN group authentication ok / rejected  -> Authentication (3002), Logon / Success|Failure
+    - 746016          user-identity DNS lookup failed            -> DNS Activity (4003), Query / Failure
+    - 733100          Threat-detection drop rate exceeded        -> Detection Finding (2004), Create
+
+  Sits alongside the existing `cisco_asa_logs-latest` entry rather than replacing
+  it, following the `okta_logs` / `okta_ocsf_logs` and `dns_general_logs` /
+  `dns_ocsf_logs` precedent. The two are not interchangeable: the existing entry
+  expects a syslog timestamp in the frame (`<PRI><ts>: %ASA-...`) and emits
+  vendor-native field names, whereas this one targets the timestamp-less frame
+  `<PRI>%ASA-<sev>-<id>:` and emits OCSF. Tenant parser names differ
+  (`cisco_asa_logs` vs `cisco_asa_ocsf_logs`), so both can be installed at once.
+
+  Cisco makes the identity-firewall user suffix `(DOMAIN\user)` / `(user)` and
+  the TCP teardown reason optional, so the connection build/teardown messages
+  get one format per shape rather than one long all-or-nothing format string
+  (a single empty capture makes SDL reject an entire format match).
+version: "1.0.2"
+author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+vendor: Cisco
+product: Adaptive Security Appliance
+format: OCSF
+log_format: >
+  ASA syslog. Primary shape is `<PRI>%ASA-<severity>-<message-id>: <body>` with
+  no timestamp and no hostname (appliance `logging timestamp` disabled, no
+  syslog relay rewrite). Also accepts `<PRI><Mmm d yyyy HH:mm:ss>: %ASA-...`
+  (appliance-stamped) and `<PRI><Mmm d HH:mm:ss> <host> %ASA-...` (RFC 3164
+  relay).
+ingestion_method: >
+  ASA `logging host` / `logging trap` forwarding to the SDL collector over
+  syslog (UDP/TCP/TLS). One event per line; no multi-line events, so no
+  lineGroupers are needed.
+ocsf_classes:
+  - class_uid: 4001
+    class_name: Network Activity
+    note: >
+      Connection lifecycle (TCP/UDP/ICMP) and SSL/TLS session lifecycle. OCSF
+      1.6.0 has no standalone TLS class, so 725001/725002/725007/725016 are
+      Network Activity carrying the `tls` object; `connection_info.protocol_name`
+      is stamped as TCP on those formats since SSL/TLS on ASA runs over TCP.
+      For ICMP, `faddr` (foreign host) maps to src_endpoint and `laddr` (local
+      host) to dst_endpoint, which is correct for the observed inbound
+      direction; the value after `faddr` is the ICMP identifier, not a port,
+      so it is kept as `unmapped.icmp_id`.
+  - class_uid: 3002
+    class_name: Authentication
+    note: >
+      AAA and WebVPN authentication outcomes. 113022/113023 (AAA server marked
+      FAILED/ACTIVE) are AAA infrastructure state rather than an authentication
+      attempt; they are emitted as Authentication / Other (activity_id 99) with
+      status_id reflecting the transition, on the grounds that Authentication is
+      the closest OCSF class rather than inventing an unrelated one. Revisit if
+      a different class is preferred.
+      `is_remote` describes whether the attempt arrived over a remote
+      connection, NOT where the credential store lives. Since v1.0.1, 113015
+      (local user database) is `is_remote: true` because the message carries a
+      user IP, and 113014 omits `is_remote` entirely because it carries no user
+      IP and the answer is therefore not knowable from the message.
+  - class_uid: 4003
+    class_name: DNS Activity
+    note: >
+      746016 user-identity DNS resolution failure. The failure text (timeout /
+      unresolvable / UNKNOWN) is not a DNS RCODE, so `rcode`/`rcode_id` are
+      deliberately left unset and the text goes to `status_detail`.
+  - class_uid: 2004
+    class_name: Detection Finding
+    note: >
+      733100 threat-detection drop-rate breach. Chosen over Network Activity
+      because the message reports a detection threshold breach, not a flow.
+      Cisco's "Cumulative total count" is a cumulative dropped-packet counter,
+      NOT the number of times this event occurred, so since v1.0.1 it goes to
+      `unmapped.cumulative_drop_count` and the base-event `count` is left unset.
+      The burst/average rates and the scanning object name are also `unmapped.*`.
+design_decisions:
+  - >
+    A parser-root default class of 4001 / activity_id 99 / type_uid 400199 is
+    set so that an ASA message id this parser does not yet model still arrives
+    typed (frame format only), with metadata.event_code populated for triage.
+    Per-format attributes override it on every modelled message id.
+  - >
+    ASA severity (0-7) is derived from the `%ASA-<severity>-` digit rather than
+    hardcoded per message id, because `logging message <id> level <n>` lets
+    operators retune it. A v1 `cast: enum` folds it to OCSF `severity_id` (0-6).
+  - >
+    Only the numeric `severity_id` is emitted, not a string label. OCSF's string
+    counterpart is `severity`, which SDL ingest reserves and coerces through its
+    own syslog keyword table; `severity_name` would survive ingest but is not an
+    OCSF 1.6.0 field, so it is omitted rather than invented.
+  - >
+    The address pattern is `[0-9a-fA-Fx:.]+`, which accepts IPv4, IPv6 and the
+    `x.x.x.x` redaction placeholder used in the supplied sample. This keeps the
+    parser testable against the redacted sample; tighten it to a strict IPv4/v6
+    alternation if placeholder tolerance is unwanted.
+  - >
+    ASA connection duration is `h:mm:ss`. OCSF `duration` is an integer, and the
+    mapper has no arithmetic op, so the value is kept verbatim as
+    `unmapped.duration_hms` rather than written into `duration` in the wrong
+    unit. Converting it needs a `computeFields` PowerQuery rewrite.
+  - >
+    NAT/mapped addresses (the parenthesised pairs in 302013/302015, `gaddr` in
+    302020/302021) have no home in OCSF 1.6.0 Network Activity — there is no
+    `connection_info.src_translated` — so they are kept under `unmapped.nat_*`.
+  - >
+    `message` (the raw line) is intentionally retained. ASA emits many
+    unmodelled message ids whose bodies are free text, and the raw line is the
+    only way to triage them.
+known_gaps:
+  - >
+    716038 (WebVPN authentication successful) is built from the documented Cisco
+    message shape, not from a line in the supplied sample. Its format string is
+    otherwise identical to 716039, which is sample-verified.
+  - >
+    No `observables[]` array is emitted. Adding one needs per-entry predicates
+    to avoid writing observables with a name but no value on events that lack
+    the source field.
+  - >
+    Only the 18 message ids present in the sample (plus 716038) are modelled.
+    Common additions worth a follow-up: 106023 (deny by access-group), 106100
+    (ACL hit), 305011/305012 (NAT translation build/teardown), 302020/302021
+    outbound direction, 111008/111009/111010 (CLI command executed),
+    605005/611101/315011 (device login), 722022/722023/722051 (AnyConnect
+    session).
+tags: cisco, asa, firewall, vpn, syslog, ocsf, network-activity, authentication, dns, detection-finding
+validation:
+  - >
+    Structural: augmented JSON parses strictly after comment-stripping and
+    key-quoting; zero trailing commas (tools/generic/tc.py, check_conf.py).
+  - >
+    Pattern-versus-data: all 200 sample lines match a frame format AND a
+    message-id format, with per-field captures inspected for every one of the
+    18 message ids present. Additional synthetic checks cover real IPv4, IPv6,
+    both timestamped frame variants, the no-user UDP teardown shape, 716038,
+    and an unmodelled message id falling through to frame-only.
+  - >
+    Tenant-confirmed (v1.0.0 run, 2026-09-16): SDL runtime semantics all behave
+    as designed. The v1 `mappings` block executed (protocol_num,
+    direction/direction_id, auth_protocol_id, severity_id all populated via
+    `cast: enum`); parser-root `attributes:` MERGED with per-format
+    `attributes:` rather than being replaced, so the 4 mandatory attributes
+    survive on every event; and the format-id sentinel `drop` ops removed all
+    24 sentinels from the stored event.
+  - >
+    Tenant-confirmed (v1.0.2 run on the full 200-line capture, 2026-09-16): all
+    v1.0.1/v1.0.2 edits behave as intended and nothing regressed. 113015 now
+    carries `is_remote: true` alongside `unmapped.aaa_source`; 113014 carries no
+    `is_remote`; 733100 carries `unmapped.cumulative_drop_count` and no
+    base-event `count`. The new parser-root `status_id: 0` / `status: "Unknown"`
+    default is correctly INVISIBLE on this capture -- every message id present
+    has a format that sets status explicitly -- so `status: "Unknown"` appearing
+    on a line from this file would mean a detail format had stopped matching.
+  - >
+    Offline regression harness: per-format hit counts on the 200-line capture are
+    byte-identical between v1.0.0 and v1.0.2 (24 formats, 0 unmatched lines, 0
+    lines matching two detail formats), confirming the post-v1.0.0 edits touched
+    only attributes and one capture name, not the format layer.
+tested_on:
+  - Cisco ASA syslog capture, 200 lines, 18 distinct message ids (pre-redacted)
+  - >
+    A 28-line synthetic distilled sample (maintained outside this repo) that
+    fires all 24 formats at least once, including the four the 200-line capture
+    never exercised: asa_teardown_conn, asa_webvpn_auth_success,
+    asa_frame_device_ts and asa_frame_rfc3164. It also covers outbound
+    direction, IPv6 endpoints, and two unmodelled message ids falling through to
+    the frame-only default class.
