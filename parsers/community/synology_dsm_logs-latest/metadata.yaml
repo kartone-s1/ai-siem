@@ -1,0 +1,60 @@
+metadata_details:
+  purpose: Parser for Synology DSM Log Center syslog output, fanning the five observed
+    message shapes out to OCSF SMB Activity (4006), Authentication (3002) and File
+    System Activity (1001), and preserving DSM subsystem notices as unclassified
+    appliance events.
+  datasource_vendor: synology
+  datasource_name: DSM
+  dataSource: ocsf
+  format: OCSF
+  ingestion_method: syslog
+  dependency_summary: Requires DSM Log Center syslog forwarding with the Connection
+    and WinFileService logs enabled (Log Center > Log Sending). DSM forwards BSD
+    syslog with no year and no UTC offset, so the parser `timezone` must match the
+    NAS timezone.
+  performance_impact: Minimal - one short frame match plus at most one body fragment
+    match per line (all body formats halt), and independent rewrites for path, name
+    and user decomposition. No line groupers, no JSON sub-parsing.
+  tags: synology, dsm, nas, smb, cifs, file-activity, syslog, ocsf, authentication,
+    parser
+  version: 2.0.1
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+  changelog:
+    - "2.0.1 - tenant-verified. Confirmed on the tenant: bare BSD syslog
+      timestamps ARE accepted and the year is inferred correctly, the
+      trailing-full-stop fix holds, and all three later-rule-wins
+      overrides work. One fix: DSM emits 'from [(ip)]' with an empty
+      NetBIOS name for service-account connections, and the shared
+      skeleton's [^(]* matched empty and wrote src_endpoint.hostname as
+      an empty string. Hostname now has a dedicated rule requiring at
+      least one character, so the field is absent rather than blank."
+    - "2.0.0 - structural rewrite before first tenant test. The sibling
+      NetApp ONTAP parser proved that a fragment format (pattern starting
+      with '.*') carrying field matchers silently matches nothing on the
+      tenant; four of this parser's six formats used that pattern and
+      would have emitted no OCSF fields. All body shapes are now
+      capture-free fragments whose fields come from rewrites against
+      `message`. Also fixed during local verification: skeleton regexes
+      lacking an end-anchor left the sentence's trailing full stop
+      appended to every captured value (share = 'SHARE01.',
+      src_endpoint.ip = '192.0.2.10.'), because substitution replaces
+      only the matched region."
+    - 1.0.0 - initial build (never tenant-tested; superseded)
+  ocsf_classes:
+    - "Connection: ... accessed shared folder -> SMB Activity (4006), activity_id 99"
+    - "Connection: Host ... failed to connect -> SMB Activity (4006), activity_id 99"
+    - "Connection: User ... failed to log in -> Authentication (3002), activity_id 1"
+    - "WinFileService Event -> File System Activity (1001), activity_id 4/5 (Delete/Rename)"
+    - "System / NetworkBackup SYSTEM notices -> unclassified (no class_uid)"
+  known_limitations:
+    - OCSF 1.6.0 class 1001 has no src_endpoint object, so the SMB client IP on file
+      operations is carried as unmapped.client_ip rather than a standard path.
+    - file.size is not emitted. DSM reports a pre-formatted human string ("127.82 KB",
+      or "NA" for folders); the raw string plus a value/unit split are kept in
+      unmapped.size_text / size_value / size_unit.
+    - SMB Activity activity_id is 99 (Other) because the OCSF 4006 enum covers SMB
+      create dispositions, not tree connects or negotiation rejections. The vendor verb
+      is in unmapped.vendor_action.
+    - Only delete and rename were present in the sample; create, read and write
+      mappings are included because DSM emits them from the same WinFileService logger
+      and they are exact OCSF enum matches, but they are unverified against data.
