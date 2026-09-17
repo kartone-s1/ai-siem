@@ -1,0 +1,45 @@
+metadata_details:
+  purpose: Parser for NetApp ONTAP kern_audit management-plane audit records forwarded
+    over BSD syslog, normalising every SNMP, ONTAPI and SSH authentication decision
+    into OCSF Authentication (3002) and preserving the cluster TIME_INFO clock
+    heartbeat as an unclassified record.
+  datasource_vendor: netapp
+  datasource_name: ONTAP
+  dataSource: ocsf
+  format: OCSF
+  ingestion_method: syslog
+  dependency_summary: Requires ONTAP EMS event forwarding (event notification
+    destination of type syslog) with the kern_audit subsystem enabled, delivered as
+    single-line BSD syslog. The ONTAP EMS timestamp must remain in the message body -
+    it is the authoritative event time, since the BSD syslog header carries no year.
+  performance_impact: Minimal - one syslog/EMS frame match, one fragment match over
+    the five "::"-delimited audit fields, and seven independent rewrites. No line
+    groupers, no JSON sub-parsing.
+  tags: netapp, ontap, kern_audit, storage, nas, syslog, ocsf, authentication, snmp,
+    ontapi, ssh, parser
+  version: 1.1.1
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+  changelog:
+    - "1.1.0 - three fixes found by Test Parser on the live tenant:
+      (a) the audit record is now sliced by rewrites against `message`
+      instead of by field matchers in a fragment format - the previous
+      multi-capture fragment silently matched nothing, so no OCSF fields
+      and no class tagging were emitted at all;
+      (b) the EMS timestamp is rebuilt as ISO 8601 - the tenant rejected
+      the previous \"MMM dd yyyy HH:mm:ss +HH:MM\" form as \"not a
+      recognized format\", silently falling every event back to ingest
+      time;
+      (c) skipNumericConversion added to the frame - EMS sequence ids
+      were being coerced to floats (\"00000010.00449e02\" -> 1000.449)."
+    - 1.0.0 - initial build.
+  ocsf_classes:
+    - kern_audit record -> Authentication (3002), activity_id 1 (Logon)
+    - TIME_INFO heartbeat -> unclassified (no class_uid)
+  known_limitations:
+    - activity_id is a constant 1 (Logon) for every record. ONTAP kern_audit does not
+      distinguish logon from logoff on these subtypes, and every record in the sample
+      is an authentication attempt.
+    - auth_protocol_id is 99 (Other) because SNMP, ONTAPI and SSH are absent from the
+      OCSF auth_protocol_id enum. The real protocol name is in auth_protocol.
+    - "status is derived from ONTAP's \"Error:\" state prefix. Successful audit records
+      were not present in the sample, so the Success branch is unverified against data."
