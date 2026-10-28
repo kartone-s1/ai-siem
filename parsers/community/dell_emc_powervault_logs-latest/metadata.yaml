@@ -1,0 +1,68 @@
+metadata_details:
+  status: PARKED - DO NOT DEPLOY. Never validated against a tenant. Parked
+    2026-09-17 because the real Dell EMC log stream differs substantially from
+    the sample this was written against; that sample was a CSV export mixing
+    two unrelated devices (a PowerVault ME array and an HPE iLO 5 BMC), which
+    suggests it did not come from the live feed. Needs new samples and a
+    rewrite of the regexes and shape inventory - the structural approach is
+    still sound and matches the two tenant-verified sibling parsers.
+  purpose: Parser for a mixed storage/server management syslog stream containing Dell
+    EMC PowerVault ME array events (RFC 5424 with a details@347 structured-data
+    element) and HPE iLO 5 server BMC events. Array hardware/health events are kept as
+    faithful vendor-native records with no OCSF class; auth-bearing iLO messages are
+    normalised to OCSF Authentication (3002).
+  datasource_vendor: dell emc
+  datasource_name: PowerVault ME
+  dataSource: ocsf
+  format: OCSF
+  ingestion_method: syslog
+  dependency_summary: Requires array syslog notification (Settings > Notifications >
+    Syslog) and iLO 5 remote syslog to be enabled. Both device families were present
+    in the same sample export; if they are split onto separate log sources, this
+    parser can be split at the SHAPE A / SHAPE B boundary with no other changes.
+  performance_impact: Minimal - one frame match per shape plus a repeating key="value"
+    extractor over the array's structured-data block. No line groupers, no JSON
+    sub-parsing.
+  tags: dell, emc, powervault, me4, me5, hpe, ilo, ilo5, bmc, storage, array, syslog,
+    rfc5424, ocsf, authentication, parser
+  version: 2.0.0
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+  changelog:
+    - "2.0.0 - structural rewrite before first tenant test. (a) The two
+      iLO authentication formats were multi-capture fragments, a pattern
+      the sibling NetApp ONTAP parser proved silently matches nothing on
+      the tenant; they are now capture-free fragments fed by rewrites
+      against `message`. (b) The repeating structured-data extractor
+      ('.*$_=identifier$=\"$_=noQuote$\"' with repeat:true) was also a
+      fragment carrying captures, so it is replaced by six independent
+      rewrites, one per known SD key. (c) Both vendor date forms are now
+      converted to explicit ISO 8601, since the tenant was shown to
+      reject 'MMM dd yyyy HH:mm:ss' and fall back silently to ingest
+      time; the iLO conversion also pins the MM/DD reading."
+    - 1.0.0 - initial build (never tenant-tested; superseded)
+  ocsf_classes:
+    - "PowerVault ME array events -> unclassified (no class_uid), vendor-native fields
+      plus derived severity_id"
+    - "iLO 5 Browser logout -> Authentication (3002), activity_id 2 (Logoff)"
+    - "iLO 5 SSH login failure -> Authentication (3002), activity_id 1 (Logon), Failure"
+    - "all other iLO 5 messages -> unclassified frame plus unmapped.ilo_message"
+  known_limitations:
+    - "TIMESTAMP: the array emits a malformed RFC 5424 timestamp - the offset sign is
+      missing (\"...T21:34:06.0000008:0\" rather than \"...+08:00\"). The parser takes
+      the wall-clock seconds and interprets them with the parser `timezone` (UTC),
+      keeping the raw value in metadata.original_time and the decoded offset in
+      device_tz_offset. The array's host field is still \"Uninitialized-Name\" and its
+      ust/lst tick counts differ by exactly 28800s, i.e. its timezone was never
+      configured. ACTION: fix the array's NTP/timezone config, or set the parser
+      timezone to a fixed +08:00 zone if that offset is genuinely intended."
+    - "VENDOR: SD-ID details@347 is IANA enterprise 347 (Dot Hill / Seagate), the
+      firmware OEM behind both Dell EMC PowerVault ME and HPE MSA. Naming follows the
+      sample filename; retag dataSource.name if these are in fact HPE MSA arrays."
+    - OCSF 1.6.0 has no component-health class, so array events carry the 4 mandatory
+      attributes plus vendor-native fields by decision. severity_id is still derived
+      from eventPriority because it is useful for alerting.
+    - "\"ssn\" is mapped to event_uid: it increments once per event across the sample
+      (B20..B26), so it reads as an event sequence id rather than a serial number."
+    - iLO 5 has a large message catalog; only four messages were present in the sample.
+      Unmatched iLO messages still land as a frame plus unmapped.ilo_message, so new
+      subtypes are added as extra fragment formats without touching the frames.
