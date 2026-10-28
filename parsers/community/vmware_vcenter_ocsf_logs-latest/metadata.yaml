@@ -1,0 +1,67 @@
+metadata_details:
+  purpose: Parser for VMware vCenter Server Appliance (VCSA) syslog (RFC 5424). Normalises
+    vCenter session events, SSH/sudo sessions and the HTTP access logs into OCSF
+    Authentication (3002) and HTTP Activity (4002); every other service is kept as an
+    unclassified event with host and service name extracted.
+  datasource_vendor: vmware
+  datasource_name: VMware vCenter
+  dataSource: ocsf
+  format: OCSF
+  ingestion_method: syslog
+  dependency_summary: Requires the appliance to forward its logs by syslog in RFC 5424
+    format (<PRI>1 timestamp host app procid - - message), one event per line.
+  performance_impact: Minimal - one anchored format per service, ordered most-specific-first.
+  tags: vmware, vcenter, vcsa, vsphere, syslog, rfc5424, ocsf, authentication, http
+  version: 1.0.0
+  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
+  ocsf_classes:
+    - vpxd UserLogin/UserLogout/BadUsername session events -> Authentication (3002)
+    - vpxd EventEx "SSH session was opened/closed" -> Authentication (3002)
+    - sshd Accepted/Failed -> Authentication (3002)
+    - sudo pam_unix session opened/closed -> Authentication (3002)
+    - envoy-access, eam-access, vpxd-svcs-access, vc-ws1a-broker access -> HTTP Activity (4002)
+    - all other services (vpxd-main, sso-identity-sts, vsan-health-main, GC logs, ...) -> unclassified
+
+design_decisions:
+  - Each detail format carries the full syslog prefix and halts, rather than sharing a
+    non-halting frame, because two formats capturing `time` would conflict. A last-resort
+    `frame` format catches everything else.
+  - vpxd events use the event timestamp inside the message (UTC, microseconds) as `time`.
+    Other services use the syslog header timestamp, because their own timestamps are
+    not ISO 8601 (Apache `15/Oct/2026:09:29:50 +0000`, ws1a `09:30:01,307`).
+  - The vpxd datacenter slot can be empty, so one `sl_mid` regex swallows "[dc] [id] [" in a
+    single capture; a single empty capture would reject the whole format.
+  - BadUsername messages carry `user@realm@ip`; the user is split from the IP on the LAST
+    "@" with two rewrites on the format.
+  - HTTP `activity_id`, `activity_name` and `type_uid` come from the request method via
+    `constant` ops; the per-format default is 99 Other.
+  - `severity_id` is fixed at 1 (every priority in the sample is informational or notice).
+    OCSF 1.6.0 has no `severity_name`.
+  - Frame-only throwaways (`sl_*`, `log_priority`) and format-id sentinels are removed with
+    `drop` ops in the mappings block.
+
+known_gaps:
+  - Only about 15 of roughly 30 services are modelled. The rest (860 of 1000 sample lines)
+    arrive unclassified with `device.hostname`, `service.name` and `time`; the inner
+    application severity (INFO/WARN/ERROR) and message are not parsed.
+  - envoy-access: `http_request.length` and `http_response.length` are taken as the first and
+    second byte counters, and `duration` as the first of two timings. The Envoy log format is
+    not shown in the sample, so this ordering is inferred.
+  - vpxd-svcs-access: the leading counters are read as response bytes and duration in ms.
+    This is inferred from Tomcat's usual access-log layout, not confirmed.
+  - vcsa-audit (auditd), CROND, applmgmt and sudo COMMAND lines are not mapped to Process
+    Activity; sudo COMMAND is kept under `unmapped.*`.
+  - sshd "Failed password" (valid and invalid user) formats were checked on two synthetic
+    lines only, because the sample has no failures.
+  - vc-ws1a-broker non-access lines (30 of 80) fall through to the unclassified frame.
+  - The raw sample prefixes each line with "| " and follows it with a "|" separator line.
+    This is treated as a paste artifact: the parser expects the line to begin at "<PRI>".
+
+validation:
+  - "ptest-api against the live parsers/test endpoint: 1000 lines in, 1000 events out, exit 0."
+  - "Class breakdown: 126 HTTP Activity (63 GET, 63 POST), 21 Authentication
+    (11 Logon success, 1 Logon failure, 9 Logoff), 853 unclassified."
+  - "No sl_* or log_priority field and no format-id sentinel remains on any event."
+
+tested_on:
+  - VMware vCenter Server Appliance syslog sample (raw/VCENTER.txt), 1000 lines, 2026-10-15
