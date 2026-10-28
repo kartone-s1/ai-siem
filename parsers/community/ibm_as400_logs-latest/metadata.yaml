@@ -1,60 +1,11 @@
 metadata_details:
-  purpose: Parser for an IBM i (AS/400) syslog feed that carries two record types - web-server
-    access records, normalised into OCSF HTTP Activity (4002), and audit-journal user-profile
-    records (Create, Change, Delete USRPRF), normalised into OCSF Account Change (3001).
-  datasource_vendor: ibm
-  datasource_name: IBM AS400
-  dataSource: ocsf
-  format: OCSF
+  purpose: "Parser for IBM i (AS/400) syslog, normalising web access records to OCSF HTTP Activity (4002) and user-profile audit records to Account Change (3001)."
+  datasource_vendor: "IBM"
+  dataSource: "IBM AS400"
+  format: "syslog"
   ingestion_method: syslog
-  dependency_summary: Requires an IBM i syslog forwarder delivering single-line BSD syslog
-    with the audit-journal text and the web-server access log in the message body. The
-    event time is taken from inside the body, not from the BSD syslog header, which
-    carries no year.
-  performance_impact: Minimal - one syslog frame match, one capture-free fragment match per
-    record type, and rewrites against the raw message (22 on the web format, 19 on the audit
-    format). No line groupers, no JSON sub-parsing.
-  tags: ibm, ibm i, as400, as/400, audit journal, user profile, web access, syslog, ocsf,
-    http activity, account change, parser
-  version: 1.0.0
-  author: Mario Ciccarelli (mario.ciccarelli@sentinelone.com)
-  changelog:
-    - 1.0.0 - initial build.
-  ocsf_classes:
-    - web access record -> HTTP Activity (4002), activity_id from the HTTP method
-    - USRPRF audit record -> Account Change (3001), activity_id from the verb and the
-      changed attributes
-  known_limitations:
-    - Tested against the real parser engine through the REST endpoint
-      (POST /v2/api/parsers/test, same engine as Test Parser) and cross-checked against the
-      web Test Parser output on the 121-line sample. 120 events came back from 120 lines:
-      90 HTTP Activity (4002) and 30 Account Change (3001), with ISO 8601 timestamps. The
-      REST endpoint omits `message`, and the web tester adds a "parsed as" annotation to
-      `timestamp`; neither is a parser difference. Not yet run against live ingest on a
-      tenant. The sample is a single capture, so rarer audit shapes are untested.
-    - severity_id is set to 1 on every event, whatever the record; it is not derived from
-      the source.
-    - The syslog source truncates every web line at a fixed length, mid-URL. No
-      http_response.code is parsed because no complete line exists in the sample, and
-      http_request.url.query_string is cut wherever the source cut it. In the 120-line
-      sample 87 of the 90 web lines are exactly 1024 characters, and the cut usually lands
-      mid-parameter (for example a query string ending in `&r`). Because the cut falls
-      before the end of the line, http_request.version is populated only on the few short
-      lines that still carry the trailing `HTTP/1.x`. Truncation happens upstream of the
-      parser and cannot be recovered here; fix it at the forwarder if full URLs matter.
-    - The number after the access-log timestamp is unidentified (bytes or duration) and is
-      kept in unmapped.unlabeled_metric rather than in an OCSF field.
-    - The leading IP of each web line is unidentified (reverse proxy or the server itself)
-      and is kept in unmapped.leading_ip. src_endpoint.ip is the first address of the
-      pipe-delimited client chain.
-    - The audit-journal time carries no offset, so the parser-level timezone
-      (Europe/Rome) is an assumption. The web time carries its own offset.
-    - The audit-journal time is cut from microseconds to milliseconds in `timestamp`; the
-      raw value is kept in metadata.original_time.
-    - Only USRPRF audit records are classified. Other IBM i object types fall through with
-      the syslog frame only, and `message` is kept so they can be recovered.
-    - Account Change activity is a best fit. A new PWDCHGDAT is reported as Password Change
-      although an administrator reset sets the same attribute. A Change that touches both
-      PWDCHGDAT and STATUS is reported as Enable or Disable.
-    - The OCSF activity_id values for HTTP Activity and Account Change are not in the bundled
-      schema reference, which lists attribute names only.
+  dependency_summary: "Requires an IBM i syslog forwarder delivering single-line BSD syslog."
+  performance_impact: "Minimal - one frame match plus one fragment match per record type."
+  tags: "ibm, as400, ibm-i, audit-journal, syslog, ocsf, parser"
+  version: "1.0.0"
+  author: "Mario Ciccarelli (mario.ciccarelli@sentinelone.com)"
