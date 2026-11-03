@@ -1,0 +1,11 @@
+metadata_details:
+  purpose: "Parser for Nutanix Prism Central (PCVM) syslog, normalising sshd, sudo, PAM, auditd, cron, netfilter, Prism REST api_audit, consolidated_audit and the Envoy/Tomcat access logs to OCSF Authentication (3002), SSH Activity (4007), Process Activity (1007), File System Activity (1001), Network Activity (4001), HTTP Activity (4002) and API Activity (6003)."
+  datasource_vendor: "Nutanix"
+  dataSource: "Nutanix Prism Central"
+  format: "syslog"
+  ingestion_method: "syslog"
+  dependency_summary: "Requires the PCVM rsyslog forwarder configured to deliver single-line RFC 3164 syslog with an RFC 3339 timestamp."
+  performance_impact: "Moderate - one frame match plus one anchored detail match per line, with per-shape rewrites on the busiest producers."
+  tags: "nutanix, prism-central, pcvm, ahv, syslog, auditd, sshd, sudo, iptables, ocsf, parser"
+  version: "1.0.0"
+  author: "Mario Ciccarelli (mario.ciccarelli@sentinelone.com)"
