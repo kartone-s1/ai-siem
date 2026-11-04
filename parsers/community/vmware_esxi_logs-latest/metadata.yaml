@@ -1,0 +1,11 @@
+metadata_details:
+  purpose: "Parser for VMware ESXi host syslog, normalising SSH, API session and audit events to OCSF Authentication (3002), Network Activity (4001) and Process Activity (1007), and the envoy-access proxy log to HTTP Activity (4002)."
+  datasource_vendor: "VMware"
+  dataSource: "VMware ESXi"
+  format: "syslog"
+  ingestion_method: "syslog"
+  dependency_summary: "Requires the ESXi host to forward its logs by syslog with ISO 8601 timestamps."
+  performance_impact: "Minimal - one anchored format per daemon."
+  tags: "vmware, esxi, syslog, ocsf, parser"
+  version: "1.0.0"
+  author: "Mario Ciccarelli (mario.ciccarelli@sentinelone.com)"
