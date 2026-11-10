@@ -1,0 +1,11 @@
+metadata_details:
+  purpose: "Parser for HPE Aruba Networking AOS-CX switch syslog, normalised to OCSF (Network Activity, Authentication, HTTP Activity)."
+  datasource_vendor: "HPE"
+  dataSource: "Aruba AOS-CX"
+  format: "syslog"
+  ingestion_method: "syslog"
+  dependency_summary: "Requires AOS-CX syslog forwarding in RFC 5424 format; the Event|<id>|<level>|<module>|<instance>|<text> body shape is the AOS-CX default."
+  performance_impact: "Minimal - one halting format per event id, ordered most-specific-first, with four catch-alls."
+  tags: "hpe, aruba, aos-cx, switch, network, poe, lldp, cdp, stp, syslog, ocsf, parser"
+  version: "1.0.0"
+  author: "Mario Ciccarelli (mario.ciccarelli@sentinelone.com)"
